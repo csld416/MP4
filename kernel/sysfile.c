@@ -300,7 +300,7 @@ uint64 sys_open(void)
 
     if (omode & O_CREATE)
     {
-        ip = create(path, T_FILE, 0, 0);
+        ip = create(path, T_FILE, 0, M_ALL);
         if (ip == 0)
         {
             end_op();
@@ -370,7 +370,7 @@ uint64 sys_mkdir(void)
     struct inode *ip;
 
     begin_op();
-    if (argstr(0, path, MAXPATH) < 0 || (ip = create(path, T_DIR, 0, 0)) == 0)
+    if (argstr(0, path, MAXPATH) < 0 || (ip = create(path, T_DIR, 0, M_ALL)) == 0)
     {
         end_op();
         return -1;

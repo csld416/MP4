@@ -44,7 +44,7 @@ void ls(char *path)
 
     switch (st.type)
     {
-    case T_FILE:
+    case T_FILE:{
         char perm[3];
         perm[0] = (st.mode & M_READ) ? 'r' : '-';
         perm[1] = (st.mode & M_WRITE) ? 'w' : '-';
@@ -52,7 +52,7 @@ void ls(char *path)
 
         printf("%s %d %d %d %s\n", fmtname(path), st.type, st.ino, st.size, perm);
         break;
-
+    }
     case T_DIR:
         if (strlen(path) + 1 + DIRSIZ + 1 > sizeof buf)
         {
