@@ -307,14 +307,30 @@ sys_open(void)
             return -1;
         }
     } else {
-        // Lookup inode
-        ip = namei(path);
-        if (ip == 0) {
-            end_op();
-            return -1;
+        if (omode & O_NOACCESS) {
+            // Bypass symlink following
+            struct inode *dp;
+            char name[DIRSIZ];
+            if ((dp = nameiparent(path, name)) == 0) {
+                end_op();
+                return -1;
+            }
+            ilock(dp);
+            ip = dirlookup(dp, name, 0);
+            iunlockput(dp);
+            if (!ip) {
+                end_op();
+                return -1;
+            }
+            ilock(ip);
+        } else {
+            ip = namei(path); // follows symlinks
+            if (ip == 0) {
+                end_op();
+                return -1;
+            }
+            ilock(ip);
         }
-
-        ilock(ip);
 
         // Check access permission
         if (!(omode & O_NOACCESS)) {
@@ -530,15 +546,31 @@ sys_chmod(void)
 }
 
 /* TODO: Access Control & Symbolic Link */
-uint64 sys_symlink(void)
+uint64
+sys_symlink(void)
 {
-    /* just for your reference, change it if you want to */
+    char target[MAXPATH], path[MAXPATH];
+    struct inode *ip;
 
-    // char target[MAXPATH], path[MAXPATH];
+    if (argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+        return -1;
 
-    // if (argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
-    //     return -1;
+    begin_op();
+    ip = create(path, T_SYMLINK, 0, M_ALL);
+    if (ip == 0) {
+        end_op();
+        return -1;
+    }
 
+    // Write the target path into the symlink's data block
+    if (writei(ip, 0, (uint64)target, 0, strlen(target)) != strlen(target)) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+    }
+
+    iunlockput(ip);
+    end_op();
     return 0;
 }
 

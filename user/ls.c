@@ -4,6 +4,8 @@
 #include "kernel/fs.h"
 #include "kernel/fcntl.h"
 
+#define MAXPATH 128
+
 char *fmtname(char *path)
 {
     static char buf[DIRSIZ + 1];
@@ -23,54 +25,56 @@ char *fmtname(char *path)
 }
 
 /* TODO: Access Control & Symbolic Link */
-void ls(char *path)
-{
+void ls(char *path) {
     char buf[512], *p;
     int fd;
     struct dirent de;
     struct stat st;
 
-    if ((fd = open(path, O_NOACCESS)) < 0)
-    {
+    // Check stat(path) early to catch unreadable directories or broken symlinks
+    struct stat pre_st;
+    if (stat(path, &pre_st) < 0) {
+        fprintf(2, "ls: cannot stat %s\n", path);
+        return;
+    }
+
+    if ((fd = open(path, O_NOACCESS)) < 0) {
         fprintf(2, "ls: cannot open %s\n", path);
         return;
     }
 
-    if (fstat(fd, &st) < 0)
-    {
+    if (fstat(fd, &st) < 0) {
         fprintf(2, "ls: cannot stat %s\n", path);
         close(fd);
         return;
     }
 
-    switch (st.type)
-    {
-    case T_FILE:{
+    switch (st.type) {
+    case T_FILE: {
         char perm[3];
         perm[0] = (st.mode & M_READ) ? 'r' : '-';
         perm[1] = (st.mode & M_WRITE) ? 'w' : '-';
         perm[2] = '\0';
-
         printf("%s %d %d %d %s\n", fmtname(path), st.type, st.ino, st.size, perm);
         break;
     }
-    case T_DIR:
-        if (strlen(path) + 1 + DIRSIZ + 1 > sizeof buf)
-        {
+
+    case T_DIR: {
+        if (strlen(path) + 1 + DIRSIZ + 1 > sizeof(buf)) {
             printf("ls: path too long\n");
             break;
         }
         strcpy(buf, path);
         p = buf + strlen(buf);
         *p++ = '/';
-        while (read(fd, &de, sizeof(de)) == sizeof(de))
-        {
+
+        while (read(fd, &de, sizeof(de)) == sizeof(de)) {
             if (de.inum == 0)
                 continue;
             memmove(p, de.name, DIRSIZ);
             p[DIRSIZ] = 0;
-            if (stat(buf, &st) < 0)
-            {
+
+            if (stat(buf, &st) < 0) {
                 printf("ls: cannot stat %s\n", buf);
                 continue;
             }
@@ -83,6 +87,29 @@ void ls(char *path)
             printf("%s %d %d %d %s\n", fmtname(buf), st.type, st.ino, st.size, perm);
         }
         break;
+    }
+
+    case T_SYMLINK: {
+        char target[MAXPATH] = {0};
+        if (read(fd, target, MAXPATH) < 0) {
+            fprintf(2, "ls: cannot read symlink %s\n", path);
+            break;
+        }
+
+        struct stat target_st;
+        if (stat(target, &target_st) < 0) {
+            fprintf(2, "ls: cannot stat symlink target %s\n", target);
+            break;
+        }
+
+        if (target_st.type == T_DIR) {
+            ls(target);
+        } else {
+            char perm[3] = {'r', 'w', '\0'};
+            printf("%s %d %d %d %s\n", fmtname(path), st.type, st.ino, st.size, perm);
+        }
+        break;
+    }
     }
 
     close(fd);
