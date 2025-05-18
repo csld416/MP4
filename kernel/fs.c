@@ -207,6 +207,7 @@ struct inode *ialloc(uint dev, short type)
         { // a free inode
             memset(dip, 0, sizeof(*dip));
             dip->type = type;
+            dip->mode = M_ALL;
             log_write(bp); // mark it allocated on the disk
             brelse(bp);
             return iget(dev, inum);
@@ -230,7 +231,7 @@ void iupdate(struct inode *ip)
     dip = (struct dinode *)bp->data + ip->inum % IPB;
     dip->type = ip->type;
     dip->major = ip->major;
-    dip->minor = ip->minor;
+    dip->mode = ip->mode;
     dip->nlink = ip->nlink;
     dip->size = ip->size;
     memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
@@ -304,7 +305,7 @@ void ilock(struct inode *ip)
         dip = (struct dinode *)bp->data + ip->inum % IPB;
         ip->type = dip->type;
         ip->major = dip->major;
-        ip->minor = dip->minor;
+        ip->mode = dip->mode;
         ip->nlink = dip->nlink;
         ip->size = dip->size;
         memmove(ip->addrs, dip->addrs, sizeof(ip->addrs));

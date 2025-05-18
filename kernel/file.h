@@ -30,7 +30,8 @@ struct inode
     int valid;             // inode has been read from disk?
     short type;            // copy of disk inode
     short major;
-    short minor;
+    //short minor;
+    short mode;
     short nlink;
     uint size;
     uint addrs[NDIRECT + 1];
