@@ -299,48 +299,56 @@ sys_open(void)
 
     begin_op();
 
-    if ((ip = namei(path)) == 0) {
-        end_op();
-        return -1;
+    // Create path: alloc and lock
+    if (omode & O_CREATE) {
+        ip = create(path, T_FILE, 0, M_ALL);
+        if (ip == 0) {
+            end_op();
+            return -1;
+        }
+    } else {
+        // Lookup inode
+        ip = namei(path);
+        if (ip == 0) {
+            end_op();
+            return -1;
+        }
+
+        ilock(ip);
+
+        // Check access permission
+        if (!(omode & O_NOACCESS)) {
+            int want_read = !(omode & O_WRONLY);
+            int want_write = (omode & O_WRONLY) || (omode & O_RDWR);
+
+            if ((want_read && !(ip->mode & M_READ)) ||
+                (want_write && !(ip->mode & M_WRITE)) ||
+                (ip->type == T_DIR && want_write)) {
+                iunlockput(ip);
+                end_op();
+                return -1;
+            }
+        }
     }
 
-    ilock(ip);
-
-    // Handle O_NOACCESS (skip read/write permission checks, no symlink traversal needed here)
-    if (!(omode & O_NOACCESS)) {
-        int read_flag = !(omode & O_WRONLY);
-        int write_flag = (omode & O_WRONLY) || (omode & O_RDWR);
-
-        // Enforce permission bits
-        if (read_flag && !(ip->mode & M_READ)) {
-            iunlockput(ip);
-            end_op();
-            return -1;
-        }
-        if (write_flag && !(ip->mode & M_WRITE)) {
-            iunlockput(ip);
-            end_op();
-            return -1;
-        }
-
-        // Prevent writing to directories
-        if (ip->type == T_DIR && write_flag) {
-            iunlockput(ip);
-            end_op();
-            return -1;
-        }
-    }
-
-    // Allocate file structure
-    if ((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0) {
-        if (f)
-            fileclose(f);
+    // Sanity check for devices
+    if (ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)) {
         iunlockput(ip);
         end_op();
         return -1;
     }
 
-    f->type = FD_INODE;
+    // Allocate file and fd
+    if ((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0) {
+        if (f) fileclose(f);
+        iunlockput(ip);
+        end_op();
+        return -1;
+    }
+
+    // Setup file struct
+    f->type = (ip->type == T_DEVICE) ? FD_DEVICE : FD_INODE;
+    f->major = ip->major;
     f->ip = ip;
     f->off = 0;
     f->readable = !(omode & O_WRONLY);
@@ -353,7 +361,6 @@ sys_open(void)
     end_op();
     return fd;
 }
-
 
 uint64 sys_mkdir(void)
 {
@@ -380,7 +387,7 @@ uint64 sys_mknod(void)
     begin_op();
     if ((argstr(0, path, MAXPATH)) < 0 || argint(1, &major) < 0 ||
         argint(2, &minor) < 0 ||
-        (ip = create(path, T_DEVICE, major, minor)) == 0)
+        (ip = create(path, T_DEVICE, major, M_ALL)) == 0)
     {
         end_op();
         return -1;

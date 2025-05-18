@@ -2,6 +2,7 @@
 #include "kernel/stat.h"
 #include "kernel/fs.h"
 #include "user/user.h"
+#include "kernel/fcntl.h"
 
 // Print usage and exit
 void
@@ -28,8 +29,17 @@ parse_mode(char *s, int *op, int *bits) {
 // Single chmod: positive op adds, negative op removes
 int chmod_single(int op, int bits, char *path) {
     struct stat st;
-    if (stat(path, &st) < 0) {
+
+    // Use O_NOACCESS to bypass permission restrictions
+    int fd = open(path, O_NOACCESS);
+    if (fd < 0) {
         fprintf(2, "chmod: cannot chmod %s\n", path);
+        return -1;
+    }
+
+    if (fstat(fd, &st) < 0) {
+        fprintf(2, "chmod: cannot chmod %s\n", path);
+        close(fd);
         return -1;
     }
 
@@ -39,6 +49,7 @@ int chmod_single(int op, int bits, char *path) {
     else
         mode &= ~bits;    // remove bits
 
+    close(fd);
     return chmod(mode, path);  // final absolute mode
 }
 
@@ -67,7 +78,7 @@ chmod_recursive(int op, int bits, char *path) {
     int post_order = is_dir && op == -1 && (bits & 1);
     if (post_order) {
         // Recurse into children first
-        int fd = open(path, 0);
+        int fd = open(path, O_NOACCESS);
         if (fd < 0) {
             fprintf(2, "chmod: cannot chmod %s\n", path);
         } else {
