@@ -17,29 +17,6 @@
 #include "fcntl.h"
 #include "buf.h"
 
-uint64
-sys_chmod(void)
-{
-    char path[128];
-    int mode_op;
-
-    // args: mode_op (int), path (string)
-    if (argint(0, &mode_op) < 0 || argstr(1, path, sizeof(path)) < 0)
-        return -1;
-
-    struct inode *ip = namei(path);
-    if (ip == 0)
-        return -1;
-
-    ilock(ip);
-    ip->mode = mode_op;
-    iupdate(ip);
-    iunlock(ip);
-    iput(ip);
-
-    return 0;
-}
-
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int argfd(int n, int *pfd, struct file **pf)
@@ -538,16 +515,19 @@ sys_chmod(void)
     if (argint(0, &mode_op) < 0 || argstr(1, path, sizeof(path)) < 0)
         return -1;
 
+    begin_op();
     struct inode *ip = namei(path);
-    if (ip == 0)
+    if (ip == 0) {
+        end_op();
         return -1;
+    }
 
     ilock(ip);
     ip->mode = mode_op;
     iupdate(ip);
     iunlock(ip);
     iput(ip);
-
+    end_op();
     return 0;
 }
 

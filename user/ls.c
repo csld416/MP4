@@ -45,7 +45,12 @@ void ls(char *path)
     switch (st.type)
     {
     case T_FILE:
-        printf("%s %d %d %l\n", fmtname(path), st.type, st.ino, st.size);
+        char perm[3];
+        perm[0] = (st.mode & M_READ) ? 'r' : '-';
+        perm[1] = (st.mode & M_WRITE) ? 'w' : '-';
+        perm[2] = '\0';
+
+        printf("%s %d %d %d %s\n", fmtname(path), st.type, st.ino, st.size, perm);
         break;
 
     case T_DIR:
