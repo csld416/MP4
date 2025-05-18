@@ -285,7 +285,8 @@ static struct inode *create(char *path, short type, short major, short mode)
 }
 
 /* TODO: Access Control & Symbolic Link */
-uint64 sys_open(void)
+uint64
+sys_open(void)
 {
     char path[MAXPATH];
     int fd, omode;
@@ -298,37 +299,40 @@ uint64 sys_open(void)
 
     begin_op();
 
-    if ((ip = namei(path)) == 0)
-    {
+    if ((ip = namei(path)) == 0) {
         end_op();
         return -1;
     }
 
     ilock(ip);
 
-    // Handle O_NOACCESS
-    if (omode & O_NOACCESS)
-    {
-        // Do not follow symlinks; return even if no r/w permission
-        goto alloc_file;
+    // Handle O_NOACCESS (skip read/write permission checks, no symlink traversal needed here)
+    if (!(omode & O_NOACCESS)) {
+        int read_flag = !(omode & O_WRONLY);
+        int write_flag = (omode & O_WRONLY) || (omode & O_RDWR);
+
+        // Enforce permission bits
+        if (read_flag && !(ip->mode & M_READ)) {
+            iunlockput(ip);
+            end_op();
+            return -1;
+        }
+        if (write_flag && !(ip->mode & M_WRITE)) {
+            iunlockput(ip);
+            end_op();
+            return -1;
+        }
+
+        // Prevent writing to directories
+        if (ip->type == T_DIR && write_flag) {
+            iunlockput(ip);
+            end_op();
+            return -1;
+        }
     }
 
-    // Reject access if mode doesn't match permissions
-    int mode = ip->mode;
-    if ((omode & O_WRONLY) && !(mode & M_WRITE)) {
-        iunlockput(ip);
-        end_op();
-        return -1;
-    }
-    if ((omode & O_RDONLY) && !(mode & M_READ)) {
-        iunlockput(ip);
-        end_op();
-        return -1;
-    }
-
-alloc_file:
-    if ((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0)
-    {
+    // Allocate file structure
+    if ((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0) {
         if (f)
             fileclose(f);
         iunlockput(ip);
@@ -342,13 +346,11 @@ alloc_file:
     f->readable = !(omode & O_WRONLY);
     f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
 
-    if ((omode & O_TRUNC) && ip->type == T_FILE){
+    if ((omode & O_TRUNC) && ip->type == T_FILE)
         itrunc(ip);
-    }
 
     iunlock(ip);
     end_op();
-
     return fd;
 }
 
