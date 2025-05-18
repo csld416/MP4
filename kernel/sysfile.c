@@ -528,22 +528,25 @@ uint64 sys_pipe(void)
 }
 
 /* TODO: Access Control & Symbolic Link */
-uint64 sys_chmod(void)
+uint64
+sys_chmod(void)
 {
-    /* just for your reference, change it if you want to */
+    char path[128];
+    int mode_op;
 
-    // char path[MAXPATH];
-    // int mode;
-    // struct inode *ip;
+    // args: mode_op (int), path (string)
+    if (argint(0, &mode_op) < 0 || argstr(1, path, sizeof(path)) < 0)
+        return -1;
 
-    // begin_op();
-    // if (argstr(0, path, MAXPATH) < 0 || argint(1, &mode) < 0 ||
-    //     (ip = namei(path)) == 0)
-    // {
-    //     end_op();
-    //     return -1;
-    // }
-    // end_op();
+    struct inode *ip = namei(path);
+    if (ip == 0)
+        return -1;
+
+    ilock(ip);
+    ip->mode = mode_op;
+    iupdate(ip);
+    iunlock(ip);
+    iput(ip);
 
     return 0;
 }
