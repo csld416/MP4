@@ -238,7 +238,7 @@ bad:
     return -1;
 }
 
-static struct inode *create(char *path, short type, short major, short minor)
+static struct inode *create(char *path, short type, short major, short mode)
 {
     struct inode *ip, *dp;
     char name[DIRSIZ];
@@ -263,7 +263,7 @@ static struct inode *create(char *path, short type, short major, short minor)
 
     ilock(ip);
     ip->major = major;
-    ip->minor = minor;
+    ip->mode = mode;
     ip->nlink = 1;
     iupdate(ip);
 
