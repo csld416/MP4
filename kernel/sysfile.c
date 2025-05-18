@@ -298,38 +298,35 @@ uint64 sys_open(void)
 
     begin_op();
 
-    if (omode & O_CREATE)
+    if ((ip = namei(path)) == 0)
     {
-        ip = create(path, T_FILE, 0, M_ALL);
-        if (ip == 0)
-        {
-            end_op();
-            return -1;
-        }
-    }
-    else
-    {
-        if ((ip = namei(path)) == 0)
-        {
-            end_op();
-            return -1;
-        }
-        ilock(ip);
-        if (ip->type == T_DIR && omode != O_RDONLY)
-        {
-            iunlockput(ip);
-            end_op();
-            return -1;
-        }
+        end_op();
+        return -1;
     }
 
-    if (ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV))
+    ilock(ip);
+
+    // Handle O_NOACCESS
+    if (omode & O_NOACCESS)
     {
+        // Do not follow symlinks; return even if no r/w permission
+        goto alloc_file;
+    }
+
+    // Reject access if mode doesn't match permissions
+    int mode = ip->mode;
+    if ((omode & O_WRONLY) && !(mode & M_WRITE)) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+    }
+    if ((omode & O_RDONLY) && !(mode & M_READ)) {
         iunlockput(ip);
         end_op();
         return -1;
     }
 
+alloc_file:
     if ((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0)
     {
         if (f)
@@ -339,22 +336,13 @@ uint64 sys_open(void)
         return -1;
     }
 
-    if (ip->type == T_DEVICE)
-    {
-        f->type = FD_DEVICE;
-        f->major = ip->major;
-    }
-    else
-    {
-        f->type = FD_INODE;
-        f->off = 0;
-    }
+    f->type = FD_INODE;
     f->ip = ip;
+    f->off = 0;
     f->readable = !(omode & O_WRONLY);
     f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
 
-    if ((omode & O_TRUNC) && ip->type == T_FILE)
-    {
+    if ((omode & O_TRUNC) && ip->type == T_FILE){
         itrunc(ip);
     }
 
@@ -363,6 +351,7 @@ uint64 sys_open(void)
 
     return fd;
 }
+
 
 uint64 sys_mkdir(void)
 {
