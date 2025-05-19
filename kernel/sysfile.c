@@ -3,20 +3,34 @@
 // Mostly argument checking, since we don't trust
 // user code, and calls into file.c and fs.c.
 //
-
+// 1
 #include "types.h"
+// 2
 #include "riscv.h"
+// 3
 #include "defs.h"
+// 4
 #include "param.h"
+// 5
 #include "stat.h"
+// 6
 #include "spinlock.h"
+// 7
 #include "proc.h"
+// 8
 #include "fs.h"
+// 9
 #include "sleeplock.h"
+//
 #include "file.h"
+//
 #include "fcntl.h"
+//
 #include "buf.h"
 
+#define MAXPATH 128
+
+static uint64 sys_open_internal(char *path, int omode);
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -286,61 +300,91 @@ static struct inode *create(char *path, short type, short major, short mode)
 }
 
 /* TODO: Access Control & Symbolic Link */
-uint64
-sys_open(void)
+uint64 sys_open(void)
 {
     char path[MAXPATH];
-    int fd, omode;
-    struct file *f;
-    struct inode *ip;
-    int n;
-
-    if ((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
+    int omode;
+    if (argstr(0, path, MAXPATH) < 0 || argint(1, &omode) < 0)
         return -1;
+    return sys_open_internal(path, omode);
+}
+
+static uint64 sys_open_internal(char *path, int omode)
+{
+    struct inode *ip;
+    struct file *f;
+    int fd;
 
     begin_op();
 
-    // Create path: alloc and lock
-    if (omode & O_CREATE) {
+    if (omode & O_CREATE)
+    {
+        // normal xv6 create path
         ip = create(path, T_FILE, 0, M_ALL);
-        if (ip == 0) {
+        if (ip == 0)
+        {
             end_op();
             return -1;
         }
-    } else {
-        if (omode & O_NOACCESS) {
-            // Bypass symlink following
+    }
+    else
+    {
+        // lookup the final component
+        if (omode & O_NOACCESS)
+        {
+            // do NOT follow symlink
             struct inode *dp;
             char name[DIRSIZ];
-            if ((dp = nameiparent(path, name)) == 0) {
+            if ((dp = nameiparent(path, name)) == 0)
+            {
                 end_op();
                 return -1;
             }
             ilock(dp);
             ip = dirlookup(dp, name, 0);
             iunlockput(dp);
-            if (!ip) {
-                end_op();
-                return -1;
-            }
-            ilock(ip);
-        } else {
-            ip = namei(path); // follows symlinks
-            if (ip == 0) {
+            if (ip == 0)
+            {
                 end_op();
                 return -1;
             }
             ilock(ip);
         }
+        else
+        {
+            // follow symlinks
+            ip = namei(path);
+            if (ip == 0)
+            {
+                end_op();
+                return -1;
+            }
+            ilock(ip);
+            while (ip->type == T_SYMLINK)
+            {
+                // read the link’s target string out of its data block
+                char target[MAXPATH];
+                int n = readi(ip, 0, (uint64)target, 0, MAXPATH - 1);
+                iunlockput(ip);
+                end_op();
+                if (n < 0)
+                    return -1;
+                target[n] = '\0';
+                // recurse: open the target path instead
+                return sys_open_internal(target, omode);
+            }
+        }
 
-        // Check access permission
-        if (!(omode & O_NOACCESS)) {
+        // now ‘ip’ is neither T_SYMLINK nor T_DIR or device checks…
+        // perform the usual permission checks
+        if (!(omode & O_NOACCESS))
+        {
             int want_read = !(omode & O_WRONLY);
             int want_write = (omode & O_WRONLY) || (omode & O_RDWR);
-
             if ((want_read && !(ip->mode & M_READ)) ||
                 (want_write && !(ip->mode & M_WRITE)) ||
-                (ip->type == T_DIR && want_write)) {
+                (ip->type == T_DIR && want_write))
+            {
                 iunlockput(ip);
                 end_op();
                 return -1;
@@ -348,29 +392,30 @@ sys_open(void)
         }
     }
 
-    // Sanity check for devices
-    if (ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)) {
+    if (ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV))
+    {
         iunlockput(ip);
         end_op();
         return -1;
     }
 
-    // Allocate file and fd
-    if ((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0) {
-        if (f) fileclose(f);
+    // allocate file struct + fd
+    if ((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0)
+    {
+        if (f)
+            fileclose(f);
         iunlockput(ip);
         end_op();
         return -1;
     }
 
-    // Setup file struct
-    f->type = (ip->type == T_DEVICE) ? FD_DEVICE : FD_INODE;
+    // fill in file struct
+    f->type = (ip->type == T_DEVICE ? FD_DEVICE : FD_INODE);
     f->major = ip->major;
     f->ip = ip;
     f->off = 0;
     f->readable = !(omode & O_WRONLY);
     f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
-
     if ((omode & O_TRUNC) && ip->type == T_FILE)
         itrunc(ip);
 
@@ -385,7 +430,8 @@ uint64 sys_mkdir(void)
     struct inode *ip;
 
     begin_op();
-    if (argstr(0, path, MAXPATH) < 0 || (ip = create(path, T_DIR, 0, M_ALL)) == 0)
+    if (argstr(0, path, MAXPATH) < 0 ||
+        (ip = create(path, T_DIR, 0, M_ALL)) == 0)
     {
         end_op();
         return -1;
@@ -520,8 +566,7 @@ uint64 sys_pipe(void)
 }
 
 /* TODO: Access Control & Symbolic Link */
-uint64
-sys_chmod(void)
+uint64 sys_chmod(void)
 {
     char path[128];
     int mode_op;
@@ -532,7 +577,8 @@ sys_chmod(void)
 
     begin_op();
     struct inode *ip = namei(path);
-    if (ip == 0) {
+    if (ip == 0)
+    {
         end_op();
         return -1;
     }
@@ -547,8 +593,7 @@ sys_chmod(void)
 }
 
 /* TODO: Access Control & Symbolic Link */
-uint64
-sys_symlink(void)
+uint64 sys_symlink(void)
 {
     char target[MAXPATH], path[MAXPATH];
     struct inode *ip;
@@ -558,13 +603,15 @@ sys_symlink(void)
 
     begin_op();
     ip = create(path, T_SYMLINK, 0, M_ALL);
-    if (ip == 0) {
+    if (ip == 0)
+    {
         end_op();
         return -1;
     }
 
     // Write the target path into the symlink's data block
-    if (writei(ip, 0, (uint64)target, 0, strlen(target)) != strlen(target)) {
+    if (writei(ip, 0, (uint64)target, 0, strlen(target)) != strlen(target))
+    {
         iunlockput(ip);
         end_op();
         return -1;
