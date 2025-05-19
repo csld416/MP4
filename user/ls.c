@@ -31,21 +31,13 @@ void ls(char *path) {
     struct dirent de;
     struct stat st;
 
-    // Check stat(path) early to catch unreadable directories or broken symlinks
-    struct stat pre_st;
-    if (stat(path, &pre_st) < 0) {
-        fprintf(2, "ls: cannot stat %s\n", path);
-        return;
-    }
-
-    if ((fd = open(path, O_NOACCESS)) < 0) {
+    if (stat(path, &st) < 0 || !(st.mode & M_READ)) {
         fprintf(2, "ls: cannot open %s\n", path);
         return;
     }
-
-    if (fstat(fd, &st) < 0) {
-        fprintf(2, "ls: cannot stat %s\n", path);
-        close(fd);
+    fd = open(path, 0); // try O_RDONLY
+    if (fd < 0) {
+        fprintf(2, "ls: cannot open %s\n", path);
         return;
     }
 
@@ -98,13 +90,17 @@ void ls(char *path) {
 
         struct stat target_st;
         if (stat(target, &target_st) < 0) {
-            fprintf(2, "ls: cannot stat symlink target %s\n", target);
+            // ✅ Instead of failing for symlink-to-file, only fail if we need to recurse into unreadable dir
+            // So check the current symlink stat and print it instead
+            char perm[3] = {'r', 'w', '\0'}; // symlinks always show rw
+            printf("%s %d %d %d %s\n", fmtname(path), st.type, st.ino, st.size, perm);
             break;
         }
 
         if (target_st.type == T_DIR) {
-            ls(target);
+            ls(target);  // Recurse only if it's a dir and stat succeeded
         } else {
+            // File target — just show the symlink's own info
             char perm[3] = {'r', 'w', '\0'};
             printf("%s %d %d %d %s\n", fmtname(path), st.type, st.ino, st.size, perm);
         }
