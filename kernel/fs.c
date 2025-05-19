@@ -664,7 +664,8 @@ static struct inode *namex(char *path, int nameiparent, char *name)
     while ((path = skipelem(path, name)) != 0)
     {
         ilock(ip);
-        if (ip->type == T_DIR && !(ip->mode & M_READ)) {
+        if (ip->type == T_DIR && !(ip->mode & M_READ))
+        {
             iunlockput(ip);
             return 0;
         }
@@ -686,6 +687,31 @@ static struct inode *namex(char *path, int nameiparent, char *name)
         }
         iunlockput(ip);
         ip = next;
+        ilock(ip);
+        if (ip->type == T_SYMLINK)
+        {
+            char target[MAXPATH], newpath[MAXPATH];
+            int n = readi(ip, 0, (uint64)target, 0, MAXPATH - 1);
+            iunlockput(ip);
+            if (n < 0)
+                return 0;
+            target[n] = '\0';
+
+            // Concatenate target + "/" + remaining path
+            int tlen = strlen(target);
+            int plen = strlen(path);
+            if (tlen + 1 + plen >= MAXPATH)
+                return 0;
+
+            memmove(newpath, target, tlen);
+            newpath[tlen] = '/';
+            memmove(newpath + tlen + 1, path, plen);
+            newpath[tlen + 1 + plen] = '\0';
+
+            iput(ip);
+            return namex(newpath, nameiparent, name);
+        }
+        iunlock(ip);
     }
     if (nameiparent)
     {
@@ -698,6 +724,18 @@ static struct inode *namex(char *path, int nameiparent, char *name)
 struct inode *namei(char *path)
 {
     char name[DIRSIZ];
+    struct inode *ip = namex(path, 0, name);
+    while (ip && ip->type == T_SYMLINK) {
+        char buf[MAXPATH];
+        int n = readi(ip, 0, (uint64)buf, 0, MAXPATH - 1);
+        if (n < 0) {
+            iput(ip);
+            return 0;
+        }
+        buf[n] = '\0';
+        iput(ip);
+        ip = namei(buf);  // 🌀 recurse
+    }
     return namex(path, 0, name);
 }
 

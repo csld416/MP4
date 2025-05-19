@@ -43,14 +43,6 @@ int chmod_single(int op, int bits, char *path) {
     char resolved[MAXPATH], tmp[MAXPATH];
     int fd, n;
 
-    char bitstr[3];
-    bitstr[0] = (bits & 1) ? 'r' : '-';
-    bitstr[1] = (bits & 2) ? 'w' : '-';
-    bitstr[2] = '\0';
-
-    printf("[CHMOD_DEBUG] chmod_single called on path='%s', op=%c, bits=%s\n",
-           path, op>0?'+':'-', bitstr);
-
     // start at the user-passed path
     safestrcpy(resolved, path, sizeof(resolved));
 
@@ -73,15 +65,8 @@ int chmod_single(int op, int bits, char *path) {
         }
         tmp[n] = '\0';
         close(fd);
-        printf("[CHMOD_DEBUG] resolved target='%s'\n", tmp);
         safestrcpy(resolved, tmp, sizeof(resolved));
     }
-
-    // now 'resolved' is your real target
-    printf("[CHMOD_DEBUG] applying mode %#o to '%s'\n",
-           op>0 ? (st.mode|bits) : (st.mode&~bits),
-           resolved);
-
     // finally invoke the kernel syscall
     return chmod(op>0 ? (st.mode|bits) : (st.mode&~bits), resolved);
 }
@@ -130,16 +115,18 @@ chmod_recursive(int op, int bits, char *path) {
             fprintf(2, "chmod: cannot chmod %s\n", path);
         } else {
             struct dirent de;
-            char buf[512], *p;
-            strcpy(buf, path);
-            p = buf + strlen(buf);
-            *p++ = '/';
+            char buf[512];
             while (read(fd, &de, sizeof(de)) == sizeof(de)) {
                 if (de.inum == 0) continue;
                 if (strcmp(de.name, ".") == 0 || strcmp(de.name, "..") == 0)
                     continue;
-                memmove(p, de.name, DIRSIZ);
-                p[DIRSIZ] = '\0';
+                safestrcpy(buf, path, sizeof(buf));
+                int pathlen = strlen(buf);
+                buf[pathlen++] = '/';
+                int namelen = strlen(de.name);
+                if (namelen > DIRSIZ) namelen = DIRSIZ;
+                memmove(buf + pathlen, de.name, namelen);
+                buf[pathlen + namelen] = '\0';
                 chmod_recursive(op, bits, buf);
             }
             close(fd);
@@ -160,16 +147,18 @@ chmod_recursive(int op, int bits, char *path) {
                 return;
             }
             struct dirent de;
-            char buf[512], *p;
-            strcpy(buf, path);
-            p = buf + strlen(buf);
-            *p++ = '/';
+            char buf[512];
             while (read(fd, &de, sizeof(de)) == sizeof(de)) {
                 if (de.inum == 0) continue;
                 if (strcmp(de.name, ".") == 0 || strcmp(de.name, "..") == 0)
                     continue;
-                memmove(p, de.name, DIRSIZ);
-                p[DIRSIZ] = '\0';
+                safestrcpy(buf, path, sizeof(buf));
+                int pathlen = strlen(buf);
+                buf[pathlen++] = '/';
+                int namelen = strlen(de.name);
+                if (namelen > DIRSIZ) namelen = DIRSIZ;
+                memmove(buf + pathlen, de.name, namelen);
+                buf[pathlen + namelen] = '\0';
                 chmod_recursive(op, bits, buf);
             }
             close(fd);

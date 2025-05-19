@@ -317,6 +317,7 @@ static uint64 sys_open_internal(char *path, int omode)
 
     begin_op();
 
+    // ───────────────── 2) Regular open (no create) ─────────────────
     if (omode & O_CREATE)
     {
         // normal xv6 create path
@@ -327,39 +328,114 @@ static uint64 sys_open_internal(char *path, int omode)
             return -1;
         }
     }
+    // ───────────────── 2) Regular open (no create) ─────────────────
     else
     {
-        // lookup the final component
+        // ─── 2a) O_NOACCESS: metadata‐only open ───
         if (omode & O_NOACCESS)
         {
-            // do NOT follow symlink
-            struct inode *dp;
-            char name[DIRSIZ];
-            if ((dp = nameiparent(path, name)) == 0)
+            // DLOG("branch: O_NOACCESS lookup");
+            char parent[MAXPATH], leaf[DIRSIZ];
+
+            // 1) find last slash in path[]
+            int i = 0;
+            for (; path[i]; i++) /* find length */
+                ;
+            char *slash = 0;
+            for (int j = i - 1; j >= 0; j--)
+            {
+                if (path[j] == '/')
+                {
+                    slash = &path[j];
+                    break;
+                }
+            }
+
+            // 2) split into 'parent' and 'leaf'
+            if (slash)
+            {
+                int plen = slash - path;
+                if (plen >= sizeof(parent))
+                    plen = sizeof(parent) - 1;
+                memmove(parent, path, plen);
+                parent[plen] = '\0';
+
+                int llen = strlen(slash + 1);
+                if (llen >= DIRSIZ)
+                    llen = DIRSIZ - 1;
+                memmove(leaf, slash + 1, llen);
+                leaf[llen] = '\0';
+            }
+            else
+            {
+                safestrcpy(parent, ".", sizeof(parent));
+                safestrcpy(leaf, path, sizeof(leaf));
+            }
+
+            // 3) look up the parent directory, *without* following leaf
+            ip = nameiparent(path, leaf);
+            if (!ip)
             {
                 end_op();
                 return -1;
             }
-            ilock(dp);
-            ip = dirlookup(dp, name, 0);
+            ilock(ip);
+
+            // 4) if parent itself is a symlink, chase it exactly once
+            while (ip->type == T_SYMLINK)
+            {
+                char buf[MAXPATH];
+                int n = readi(ip, 0, (uint64)buf, 0, MAXPATH - 1);
+                iunlockput(ip);
+                end_op();
+                if (n < 0)
+                    return -1;
+                buf[n] = '\0';
+                // recurse on the new path
+                return sys_open_internal(buf, omode);
+            }
+
+            // 5) must be a directory now
+            if (ip->type != T_DIR)
+            {
+                iunlockput(ip);
+                end_op();
+                return -1;
+            }
+            struct inode *dp = ip;
+
+            // 6) lookup the leaf entry (no symlink following here)
+            ip = dirlookup(dp, leaf, 0);
             iunlockput(dp);
-            if (ip == 0)
+            if (!ip)
             {
                 end_op();
                 return -1;
+            }
+            if (ip->type == T_SYMLINK)
+            {
+                char buf[MAXPATH];
+                int n = readi(ip, 0, (uint64)buf, 0, MAXPATH - 1);
+                iunlockput(ip);
+                end_op();
+                if (n < 0)
+                    return -1;
+                buf[n] = '\0';
+                return sys_open_internal(buf, omode);
             }
             ilock(ip);
         }
+        // ─── 2b) Normal open: follow final symlinks ───
         else
         {
-            // follow symlinks
-            ip = namei(path);
+            ip = namei(path); // follow symlinks
             if (ip == 0)
             {
                 end_op();
                 return -1;
             }
             ilock(ip);
+            // if it turned out to be a symlink, read its target and recurse:
             while (ip->type == T_SYMLINK)
             {
                 // read the link’s target string out of its data block
@@ -375,15 +451,15 @@ static uint64 sys_open_internal(char *path, int omode)
             }
         }
 
-        // now ‘ip’ is neither T_SYMLINK nor T_DIR or device checks…
-        // perform the usual permission checks
+        // ─── 2c) Permission checks (unless O_NOACCESS) ───
         if (!(omode & O_NOACCESS))
         {
             int want_read = !(omode & O_WRONLY);
             int want_write = (omode & O_WRONLY) || (omode & O_RDWR);
-            if ((want_read && !(ip->mode & M_READ)) ||
-                (want_write && !(ip->mode & M_WRITE)) ||
-                (ip->type == T_DIR && want_write))
+            int pass = !(want_read && !(ip->mode & M_READ)) &&
+                       !(want_write && !(ip->mode & M_WRITE)) &&
+                       !(ip->type == T_DIR && want_write);
+            if (!pass)
             {
                 iunlockput(ip);
                 end_op();
@@ -392,6 +468,7 @@ static uint64 sys_open_internal(char *path, int omode)
         }
     }
 
+    // ─── 3) Special device‐inode check ───
     if (ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV))
     {
         iunlockput(ip);
@@ -399,7 +476,7 @@ static uint64 sys_open_internal(char *path, int omode)
         return -1;
     }
 
-    // allocate file struct + fd
+    // ─── 4) Allocate the in‐kernel file struct and a file descriptor ───
     if ((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0)
     {
         if (f)
@@ -409,18 +486,26 @@ static uint64 sys_open_internal(char *path, int omode)
         return -1;
     }
 
-    // fill in file struct
+    // ─── 5) Initialize file struct and return ───
     f->type = (ip->type == T_DEVICE ? FD_DEVICE : FD_INODE);
     f->major = ip->major;
     f->ip = ip;
     f->off = 0;
-    f->readable = !(omode & O_WRONLY);
-    f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+    if (omode & O_NOACCESS)
+    {
+        f->readable = 0;
+        f->writable = 0;
+    }
+    else
+    {
+        f->readable = !(omode & O_WRONLY);
+        f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+    }
     if ((omode & O_TRUNC) && ip->type == T_FILE)
         itrunc(ip);
 
     iunlock(ip);
-    end_op();
+    end_op(); // end the transaction
     return fd;
 }
 
@@ -593,25 +678,27 @@ uint64 sys_chmod(void)
 }
 
 /* TODO: Access Control & Symbolic Link */
-uint64 sys_symlink(void)
+uint64
+sys_symlink(void)
 {
     char target[MAXPATH], path[MAXPATH];
     struct inode *ip;
 
+    // Get syscall arguments: target and link name
     if (argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
         return -1;
 
     begin_op();
+
+    // Create a new inode of type T_SYMLINK
     ip = create(path, T_SYMLINK, 0, M_ALL);
-    if (ip == 0)
-    {
+    if (ip == 0) {
         end_op();
         return -1;
     }
 
     // Write the target path into the symlink's data block
-    if (writei(ip, 0, (uint64)target, 0, strlen(target)) != strlen(target))
-    {
+    if (writei(ip, 0, (uint64)target, 0, strlen(target)) != strlen(target)) {
         iunlockput(ip);
         end_op();
         return -1;

@@ -187,3 +187,14 @@ void virtio_disk_intr(void);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))
+
+
+
+#ifdef DEBUG_OPEN
+  #define DLOG(fmt, ...) \
+        printf("[%s:%d %s] " fmt "\n",  \
+            __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+#else
+  #define DLOG(fmt, ...)
+#endif
+
