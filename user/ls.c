@@ -65,18 +65,19 @@ void ls(char *path) {
                 continue;
             memmove(p, de.name, DIRSIZ);
             p[DIRSIZ] = 0;
-
-            if (stat(buf, &st) < 0) {
+            
+            struct stat entry_st;
+            if (stat(buf, &entry_st) < 0) {
                 printf("ls: cannot stat %s\n", buf);
                 continue;
             }
 
             char perm[3];
-            perm[0] = (st.mode & M_READ) ? 'r' : '-';
-            perm[1] = (st.mode & M_WRITE) ? 'w' : '-';
+            perm[0] = (entry_st.mode & M_READ) ? 'r' : '-';
+            perm[1] = (entry_st.mode & M_WRITE) ? 'w' : '-';
             perm[2] = '\0';
 
-            printf("%s %d %d %d %s\n", fmtname(buf), st.type, st.ino, st.size, perm);
+            printf("%s %d %d %d %s\n", fmtname(buf), entry_st.type, entry_st.ino, entry_st.size, perm);
         }
         break;
     }

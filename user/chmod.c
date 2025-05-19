@@ -4,6 +4,17 @@
 #include "user/user.h"
 #include "kernel/fcntl.h"
 
+#define MAXPATH 128
+
+static void
+safestrcpy(char *dst, const char *src, int n)
+{
+    int i;
+    for (i = 0; i < n - 1 && src[i]; i++)
+        dst[i] = src[i];
+    dst[i] = '\0';
+}
+
 // Print usage and exit
 void
 usage(void) {
@@ -29,29 +40,52 @@ parse_mode(char *s, int *op, int *bits) {
 // Single chmod: positive op adds, negative op removes
 int chmod_single(int op, int bits, char *path) {
     struct stat st;
+    char resolved[MAXPATH], tmp[MAXPATH];
+    int fd, n;
 
-    // Use O_NOACCESS to bypass permission restrictions
-    int fd = open(path, O_NOACCESS);
-    if (fd < 0) {
-        fprintf(2, "chmod: cannot chmod %s\n", path);
-        return -1;
-    }
+    char bitstr[3];
+    bitstr[0] = (bits & 1) ? 'r' : '-';
+    bitstr[1] = (bits & 2) ? 'w' : '-';
+    bitstr[2] = '\0';
 
-    if (fstat(fd, &st) < 0) {
-        fprintf(2, "chmod: cannot chmod %s\n", path);
+    printf("[CHMOD_DEBUG] chmod_single called on path='%s', op=%c, bits=%s\n",
+           path, op>0?'+':'-', bitstr);
+
+    // start at the user-passed path
+    safestrcpy(resolved, path, sizeof(resolved));
+
+    // chase symlinks
+    while(1) {
+        if(stat(resolved,&st)<0) {
+            fprintf(2,"chmod: cannot stat %s\n", resolved);
+            return -1;
+        }
+        if(st.type != T_SYMLINK)
+            break;
+        if((fd = open(resolved,O_NOACCESS))<0) {
+            fprintf(2,"chmod: cannot open symlink %s\n", resolved);
+            return -1;
+        }
+        if((n = read(fd, tmp, sizeof(tmp)-1)) <= 0) {
+            close(fd);
+            fprintf(2,"chmod: cannot read symlink %s\n", resolved);
+            return -1;
+        }
+        tmp[n] = '\0';
         close(fd);
-        return -1;
+        printf("[CHMOD_DEBUG] resolved target='%s'\n", tmp);
+        safestrcpy(resolved, tmp, sizeof(resolved));
     }
 
-    int mode = st.mode;
-    if (op == 1)
-        mode |= bits;     // add bits
-    else
-        mode &= ~bits;    // remove bits
+    // now 'resolved' is your real target
+    printf("[CHMOD_DEBUG] applying mode %#o to '%s'\n",
+           op>0 ? (st.mode|bits) : (st.mode&~bits),
+           resolved);
 
-    close(fd);
-    return chmod(mode, path);  // final absolute mode
+    // finally invoke the kernel syscall
+    return chmod(op>0 ? (st.mode|bits) : (st.mode&~bits), resolved);
 }
+
 
 // Recursive chmod helper
 void
@@ -61,7 +95,20 @@ chmod_recursive(int op, int bits, char *path) {
         fprintf(2, "chmod: cannot chmod %s\n", path);
         return;
     }
+    int is_symlink = (st.type == T_SYMLINK);
     int is_dir = (st.type == T_DIR);
+
+    // Resolve symlink once
+    if (is_symlink) {
+        char target[512];
+        int fd = open(path, O_NOACCESS);
+        if (fd >= 0) {
+            read(fd, target, sizeof(target));
+            close(fd);
+            chmod_recursive(op, bits, target);
+        }
+        return;  // Do not chmod the symlink itself
+    }
 
     // Pre-order: ensure directory is readable when adding
     if (is_dir && op == 1) {

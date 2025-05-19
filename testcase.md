@@ -72,7 +72,7 @@ $ mp4_1 1
 
 **Expected Output:**
 
-```
+```sh
 $ gen 1
 $ chmod +-rw test2/d1/f1
 Usage: chmod [-R] (+|-)(r|w|rw|wr) file_name|dir_name
