@@ -51,11 +51,6 @@ void ls(char *path)
         fprintf(2, "ls: cannot open %s\n", path);
         return;
     }
-    else
-    {
-        printf("[DEBUG] stat type=%d ino=%d size=%d\n", st.type, st.ino,
-               st.size);
-    }
     fd = open(path, 0); // try O_RDONLY
     if (fd < 0)
     {
@@ -115,55 +110,49 @@ void ls(char *path)
     case T_SYMLINK:
     {
         char target[MAXPATH] = {0};
-        printf("[DEBUG] Handling symlink: %s\n", path);
 
+        // Close the initial fd, then re-open the link itself w/o following
         close(fd);
-        printf("[DEBUG] Closed original fd\n");
-
-        if ((fd = open(path, O_NOACCESS)) < 0)
+        fd = open(path, O_NOACCESS);
+        if (fd < 0)
         {
-            fprintf(2, "ls: cannot open symlink %s\n", path);
+            fprintf(2, "ls: cannot open %s\n", path);
             break;
         }
-        printf("[DEBUG] Reopened symlink %s with O_NOACCESS, fd=%d\n", path,
-               fd);
-
-        int n;
-        if ((n = read(fd, target, MAXPATH - 1)) < 0)
+        if (fstat(fd, &st) < 0)
         {
-            fprintf(2, "ls: cannot read symlink %s\n", path);
+            fprintf(2, "ls: cannot stat %s\n", path);
+            close(fd);
+            break;
+        }
+
+        // Read the link’s content (the target path)
+        int n = read(fd, target, MAXPATH - 1);
+        if (n < 0)
+        {
+            fprintf(2, "ls: cannot read %s\n", path);
             close(fd);
             break;
         }
         target[n] = '\0';
         close(fd);
 
-        printf("[DEBUG] Symlink target resolved to: %s\n", target);
-
-        struct stat target_st;
-        if (stat(target, &target_st) < 0)
+        // If it points to a directory, list that directory instead
+        struct stat st_target;
+        if (stat(target, &st_target) == 0 && st_target.type == T_DIR)
         {
-            printf("[DEBUG] stat failed on target: %s\n", target);
-            char perm[3] = {'r', 'w', '\0'};
-            printf("%s %d %d %d %s -> %s (unresolved)\n", fmtname(path),
-                   st.type, st.ino, st.size, perm, target);
-            break;
-        }
-
-        printf("[DEBUG] Target stat succeeded: type=%d ino=%d size=%d\n",
-               target_st.type, target_st.ino, target_st.size);
-
-        if (target_st.type == T_DIR)
-        {
-            printf("[DEBUG] Target is a directory. Recursing into: %s\n",
-                   target);
             ls(target);
         }
         else
         {
-            char perm[3] = {'r', 'w', '\0'};
-            printf("%s %d %d %d %s -> %s\n", fmtname(path), st.type, st.ino,
-                   st.size, perm, target);
+            // Otherwise, print the link itself.  Permissions are always 'rw'
+            char perm[3] = "rw";
+            printf("%s %d %d %d %s\n",
+                   fmtname(path), // link name
+                   st.type,       // should be T_SYMLINK (4)
+                   st.ino,        // link’s inode
+                   st.size,       // link’s size (length of target path)
+                   perm);
         }
         break;
     }
