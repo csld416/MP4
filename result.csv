@@ -1,0 +1,34 @@
+== Test mp4 problem I public testcase 0 (5%) ==
+mp4 problem I public testcase 0: OK (2.5s)
+
+== Test mp4 problem I public testcase 1 (5%) ==
+mp4 problem I public testcase 1: OK (0.7s)
+
+== Test mp4 problem I public testcase 2 (5%) ==
+mp4 problem I public testcase 2: OK (1.1s)
+
+== Test mp4 problem I public testcase 3 (5%) ==
+mp4 problem I public testcase 3: FAIL (0.9s)
+    [Error] Output on line 6: '$ symln test4/dirX/a test4/aln2', should be 'chmod: cannot chmod test4/dirXln2'
+
+== Test mp4 problem II public testcase: Bwrite Test: Normal Write (No specific kernel message check) (0%) ==
+PYTHON_INFO: Running setup to get PBN0 for File LBN 1.
+PYTHON_INFO: Captured PBN0 = 848 for File LBN 1.
+(1.7s)
+    [Error] Expected output sequence mismatch in match_substrings_ordered.
+    Could not find: 'BW_DIAG: PBN0=848, PBN1=2896, sim_disk_fail=-1, sim_pbn0_block_fail=0'
+    After successfully matching: 'TEST_DRIVER: Scenario 0 - Normal Write.'
+    
+    Relevant QEMU output (approx. lines 9 to 19 where 'BW_DIAG: PBN0=848, PBN1=2896, sim_disk_fail=-1, sim_pbn0_block_fail=0' was expected):
+       9: $ mp4_2_write_failure_test 0
+      10: TEST_DRIVER: Phase 0 - Setting up file and getting PBN for File LBN 1.
+      11: TEST_DRIVER_INFO: File LBN 1 is mapped to Disk LBN (PBN0) 848.
+      12: TEST_DRIVER: Phase 0 - Setup complete.
+      13: 
+      14: TEST_DRIVER: Scenario 0 - Normal Write.
+      15: TEST_DRIVER: Issuing standard write to File LBN 1.
+      16: TEST_DRIVER: Test write issued. Calling sync().
+      17: TEST_DRIVER: Scenario 0 finished. Check kernel output.
+      18: $ qemu-system-riscv64: terminating on signal 15 from pid 69130 (make)
+
+== Test mp4 problem II public testcase: Bwrite Test: Disk 0 Failure (Checks SKIP_PBN0) (10%) ==

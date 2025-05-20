@@ -47,16 +47,5 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    if (fork() == 0) {
-        char *args[] = {"chmod", "-R", "+rw", "test3/d1ln_4", 0};
-        exec("chmod", args);
-        // if exec fails
-        printf("exec chmod failed\n");
-        exit(1);
-    } else {
-        wait(0);
-    }
-
-
     exit(0);
 }

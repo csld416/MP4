@@ -139,6 +139,7 @@ UPROGS=\
 	$U/_readtest\
 	$U/_trace\
 	$U/_dirmake\
+	$U/_test2_csld\
 	
 
 fs.img: mkfs/mkfs README $(UEXTRA) $(UPROGS)
