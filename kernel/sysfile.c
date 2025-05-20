@@ -336,7 +336,6 @@ static uint64 sys_open_internal(char *path, int omode)
         // ─── 2a) O_NOACCESS: metadata‐only open ───
         if (omode & O_NOACCESS)
         {
-
             char parentPath[MAXPATH], leafTarget[DIRSIZ];
 
             // 1) find last slash in path[]
@@ -421,7 +420,7 @@ static uint64 sys_open_internal(char *path, int omode)
                 end_op();
                 return -1;
             }
-            //7) lock final node
+            // 7) lock final node
             ilock(ip);
         }
         // ─── 2b) Normal open: follow final symlinks ───

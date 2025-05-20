@@ -6,6 +6,8 @@
 
 #define MAXPATH 128
 
+char g_original_path[MAXPATH];
+
 void safestrcpy(char *dst, const char *src, int n)
 {
     if (n <= 0)
@@ -103,38 +105,68 @@ void chmod_recursive(int op, int bits, char *path)
     int fd = open(path, O_NOACCESS);
     if (fd < 0)
     {
-        fprintf(2, "chmod: cannot open %s\n", path);
+
+        fprintf(2, "chmod: cannot chmod %s\n", g_original_path);
         return;
     }
     if (fstat(fd, &st) < 0)
     {
         close(fd);
-        fprintf(2, "chmod: cannot stat %s\n", path);
+
+        fprintf(2, "chmod: cannot chmod %s\n", path);
         return;
     }
     close(fd);
 
     int is_dir = (st.type == T_DIR);
 
-    // Step 1: If it's a directory and unreadable but needs to be traversed, temporarily add read permission
+    // Step 1: If it's a directory and unreadable but needs to be traversed,
+    // temporarily add read permission
     int temporarily_added_read = 0;
     if (is_dir && op < 0 && !(st.mode & M_READ))
     {
-        // We can't traverse without read permission, so add it first
-        if (chmod_single(+1, M_READ, path) < 0)
+        if (op > 0 && (bits & M_READ))
         {
-            fprintf(2, "chmod: cannot chmod %s\n", path);
+            // We're adding read permission → temporarily add r to enable
+            // traversal
+            if (chmod_single(+1, M_READ, path) < 0)
+            {
+
+                fprintf(2, "chmod: cannot chmod %s\n", g_original_path);
+                return;
+            }
+            temporarily_added_read = 1;
+            st.mode |= M_READ; // Update local stat to reflect it
+        }
+        else if (op < 0)
+        {
+
+            fprintf(2, "chmod: cannot chmod %s\n", g_original_path);
             return;
         }
-        temporarily_added_read = 1;
-        st.mode |= M_READ;
     }
 
     // Step 2: If directory, recurse into its children
     if (is_dir)
     {
-        fd = open(path, 0);
-        if (fd < 0)
+        fd = open(path, O_RDONLY);
+        if (fd < 0 && op > 0 && (bits & M_READ))
+        {
+            // Attempt to temporarily add read permission
+            if (chmod_single(+1, M_READ, path) < 0)
+            {
+                fprintf(2, "chmod: cannot chmod %s\n", g_original_path);
+                return;
+            }
+            fd = open(path, O_RDONLY);
+            if (fd < 0)
+            {
+                fprintf(2, "chmod: cannot open directory %s\n", path);
+                return;
+            }
+            temporarily_added_read = 1;
+        }
+        else if (fd < 0)
         {
             fprintf(2, "chmod: cannot open directory %s\n", path);
             return;
@@ -144,14 +176,16 @@ void chmod_recursive(int op, int bits, char *path)
         char buf[512];
         while (read(fd, &de, sizeof(de)) == sizeof(de))
         {
-            if (de.inum == 0 || strcmp(de.name, ".") == 0 || strcmp(de.name, "..") == 0)
+            if (de.inum == 0 || strcmp(de.name, ".") == 0 ||
+                strcmp(de.name, "..") == 0)
                 continue;
 
             safestrcpy(buf, path, sizeof(buf));
             int pathlen = strlen(buf);
             buf[pathlen++] = '/';
             int namelen = strlen(de.name);
-            if (namelen > DIRSIZ) namelen = DIRSIZ;
+            if (namelen > DIRSIZ)
+                namelen = DIRSIZ;
             memmove(buf + pathlen, de.name, namelen);
             buf[pathlen + namelen] = '\0';
 
@@ -203,6 +237,9 @@ int main(int argc, char *argv[])
     if (parse_mode(mode_str, &op, &bits) < 0)
         usage();
 
+    // Save original user-provided path
+    safestrcpy(g_original_path, target, MAXPATH);
+
     char realpath[MAXPATH];
     if (resolve(target, realpath) < 0)
     {
@@ -211,9 +248,29 @@ int main(int argc, char *argv[])
     }
 
     if (recursive)
-        chmod_recursive(op, bits, realpath);
-    else if (chmod_single(op, bits, realpath) < 0)
-        fprintf(2, "chmod: cannot chmod %s\n", realpath);
+    {
+        struct stat st;
+        int fd = open(realpath, O_NOACCESS);
+        if (fd < 0 || fstat(fd, &st) < 0)
+        {
+            if (fd >= 0)
+                close(fd);
+            fprintf(2, "chmod: cannot chmod %s\n", target);
+            exit(1);
+        }
+        close(fd);
 
+        if (!(st.mode & M_READ) && op < 0)
+        {
+            // If unreadable, chmod -R should fail immediately
+            fprintf(2, "chmod: cannot chmod %s\n", target);
+            exit(1);
+        }
+        chmod_recursive(op, bits, realpath);
+    }
+    else if (chmod_single(op, bits, realpath) < 0)
+    {
+        fprintf(2, "chmod: cannot chmod %s\n", realpath);
+    }
     exit(0);
 }
