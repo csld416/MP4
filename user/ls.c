@@ -109,50 +109,55 @@ void ls(char *path)
 
     case T_SYMLINK:
     {
-        char target[MAXPATH] = {0};
+        char target[MAXPATH];
+        safestrcpy(target, path, sizeof(target));
 
-        // Close the initial fd, then re-open the link itself w/o following
-        close(fd);
-        fd = open(path, O_NOACCESS);
-        if (fd < 0)
-        {
-            fprintf(2, "ls: cannot open %s\n", path);
-            break;
-        }
-        if (fstat(fd, &st) < 0)
-        {
-            fprintf(2, "ls: cannot stat %s\n", path);
-            close(fd);
-            break;
-        }
-
-        // Read the link’s content (the target path)
-        int n = read(fd, target, MAXPATH - 1);
-        if (n < 0)
-        {
-            fprintf(2, "ls: cannot read %s\n", path);
-            close(fd);
-            break;
-        }
-        target[n] = '\0';
-        close(fd);
-
-        // If it points to a directory, list that directory instead
         struct stat st_target;
-        if (stat(target, &st_target) == 0 && st_target.type == T_DIR)
+
+        // Resolve symlink chain
+        while (1)
         {
-            ls(target);
+            int fd = open(target, O_NOACCESS);
+            if (fd < 0)
+            {
+                fprintf(2, "ls: cannot open %s\n", target);
+                break;
+            }
+
+            if (fstat(fd, &st_target) < 0)
+            {
+                fprintf(2, "ls: cannot stat %s\n", target);
+                close(fd);
+                break;
+            }
+
+            if (st_target.type != T_SYMLINK)
+            {
+                close(fd);
+                break;
+            }
+
+            // Still a symlink → read next level
+            int n = read(fd, target, MAXPATH - 1);
+            close(fd);
+            if (n < 0)
+            {
+                fprintf(2, "ls: cannot read %s\n", target);
+                break;
+            }
+            target[n] = '\0';
+        }
+
+        // Final resolved target
+        if (st_target.type == T_DIR)
+        {
+            ls(target); // Follow it if it's a directory
         }
         else
         {
-            // Otherwise, print the link itself.  Permissions are always 'rw'
             char perm[3] = "rw";
-            printf("%s %d %d %d %s\n",
-                   fmtname(path), // link name
-                   st.type,       // should be T_SYMLINK (4)
-                   st.ino,        // link’s inode
-                   st.size,       // link’s size (length of target path)
-                   perm);
+            printf("%s %d %d %d %s\n", fmtname(path), T_SYMLINK, st.ino,
+                   st.size, perm);
         }
         break;
     }

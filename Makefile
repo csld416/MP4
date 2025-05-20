@@ -137,6 +137,8 @@ UPROGS=\
 	$U/_mp4_2_write_failure_test\
 	$U/_chmod\
 	$U/_readtest\
+	$U/_trace\
+	$U/_dirmake\
 	
 
 fs.img: mkfs/mkfs README $(UEXTRA) $(UPROGS)

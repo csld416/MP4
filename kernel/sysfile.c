@@ -336,8 +336,8 @@ static uint64 sys_open_internal(char *path, int omode)
         // ─── 2a) O_NOACCESS: metadata‐only open ───
         if (omode & O_NOACCESS)
         {
-            // DLOG("branch: O_NOACCESS lookup");
-            char parent[MAXPATH], leaf[DIRSIZ];
+
+            char parentPath[MAXPATH], leafTarget[DIRSIZ];
 
             // 1) find last slash in path[]
             int i = 0;
@@ -357,25 +357,25 @@ static uint64 sys_open_internal(char *path, int omode)
             if (slash)
             {
                 int plen = slash - path;
-                if (plen >= sizeof(parent))
-                    plen = sizeof(parent) - 1;
-                memmove(parent, path, plen);
-                parent[plen] = '\0';
+                if (plen >= sizeof(parentPath))
+                    plen = sizeof(parentPath) - 1;
+                memmove(parentPath, path, plen);
+                parentPath[plen] = '\0';
 
                 int llen = strlen(slash + 1);
                 if (llen >= DIRSIZ)
                     llen = DIRSIZ - 1;
-                memmove(leaf, slash + 1, llen);
-                leaf[llen] = '\0';
+                memmove(leafTarget, slash + 1, llen);
+                leafTarget[llen] = '\0';
             }
             else
             {
-                safestrcpy(parent, ".", sizeof(parent));
-                safestrcpy(leaf, path, sizeof(leaf));
+                safestrcpy(parentPath, ".", sizeof(parentPath));
+                safestrcpy(leafTarget, path, sizeof(leafTarget));
             }
 
             // 3) look up the parent directory, *without* following leaf
-            ip = namex(path, 1, leaf);
+            ip = namex(path, 1, leafTarget);
             if (!ip)
             {
                 end_op();
@@ -393,8 +393,15 @@ static uint64 sys_open_internal(char *path, int omode)
                 if (n < 0)
                     return -1;
                 buf[n] = '\0';
-                // recurse on the new path
-                return sys_open_internal(buf, omode);
+                begin_op();
+                ip = namei(buf);
+                if (ip == 0)
+                {
+                    end_op();
+                    return -1;
+                }
+                ilock(ip);
+                end_op();
             }
 
             // 5) must be a directory now
@@ -407,24 +414,14 @@ static uint64 sys_open_internal(char *path, int omode)
             struct inode *dp = ip;
 
             // 6) lookup the leaf entry (no symlink following here)
-            ip = dirlookup(dp, leaf, 0);
+            ip = dirlookup(dp, leafTarget, 0);
             iunlockput(dp);
             if (!ip)
             {
                 end_op();
                 return -1;
             }
-            if (ip->type == T_SYMLINK)
-            {
-                char buf[MAXPATH];
-                int n = readi(ip, 0, (uint64)buf, 0, MAXPATH - 1);
-                iput(ip);
-                end_op();
-                if (n < 0)
-                    return -1;
-                buf[n] = '\0';
-                return sys_open_internal(buf, omode);
-            }
+            //7) lock final node
             ilock(ip);
         }
         // ─── 2b) Normal open: follow final symlinks ───
