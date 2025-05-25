@@ -218,10 +218,14 @@ int chmod_recursive(int op, int bits, char *resolved_path, char *display_path)
         close(fd);
     }
 
-    // Step 3: Apply chmod to current path (post-order)
-    if (chmod_single(op, bits, resolved_path) < 0)
+    // Step 3: Apply chmod to current path
+    int pre_order = (bits == M_WRITE); // only +w or -w should trigger pre-order
+
+    // Apply chmod in pre-order for +w or -w
+    if (pre_order)
     {
-        fprintf(2, "chmod: cannot chmod %s\n", resolved_path);
+        if (chmod_single(op, bits, resolved_path) < 0)
+            fprintf(2, "chmod: cannot chmod %s\n", resolved_path);
     }
 
     // Step 4: If we added read permission temporarily, remove it now
@@ -229,6 +233,12 @@ int chmod_recursive(int op, int bits, char *resolved_path, char *display_path)
     {
         if (op < 0 && chmod_single(-1, M_READ, resolved_path) < 0)
             fprintf(2, "chmod: cannot restore r from %s\n", resolved_path);
+    }
+    // Apply chmod in post-order for other cases
+    if (!pre_order)
+    {
+        if (chmod_single(op, bits, resolved_path) < 0)
+            fprintf(2, "chmod: cannot chmod %s\n", resolved_path);
     }
     return 0;
 }
