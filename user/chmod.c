@@ -105,14 +105,12 @@ void chmod_recursive(int op, int bits, char *path)
     int fd = open(path, O_NOACCESS);
     if (fd < 0)
     {
-
-        fprintf(2, "chmod: cannot chmod %s\n", g_original_path);
+        fprintf(2, "chmod: cannot chmod %s\n", path);
         return;
     }
     if (fstat(fd, &st) < 0)
     {
         close(fd);
-
         fprintf(2, "chmod: cannot chmod %s\n", path);
         return;
     }
@@ -131,7 +129,6 @@ void chmod_recursive(int op, int bits, char *path)
             // traversal
             if (chmod_single(+1, M_READ, path) < 0)
             {
-
                 fprintf(2, "chmod: cannot chmod %s\n", g_original_path);
                 return;
             }
@@ -140,8 +137,8 @@ void chmod_recursive(int op, int bits, char *path)
         }
         else if (op < 0)
         {
-
-            fprintf(2, "chmod: cannot chmod %s\n", g_original_path);
+            //printf("case4, yo what's up\n");
+            fprintf(2, "chmod: cannot chmod %s\n", path);
             return;
         }
     }
@@ -185,10 +182,10 @@ void chmod_recursive(int op, int bits, char *path)
             buf[pathlen++] = '/';
             int namelen = strlen(de.name);
             if (namelen > DIRSIZ)
-                namelen = DIRSIZ;
+            namelen = DIRSIZ;
             memmove(buf + pathlen, de.name, namelen);
             buf[pathlen + namelen] = '\0';
-
+            
             char resolved[MAXPATH];
             if (resolve(buf, resolved) < 0)
             {
@@ -203,7 +200,9 @@ void chmod_recursive(int op, int bits, char *path)
 
     // Step 3: Apply chmod to current path (post-order)
     if (chmod_single(op, bits, path) < 0)
+    {
         fprintf(2, "chmod: cannot chmod %s\n", path);
+    }
 
     // Step 4: If we added read permission temporarily, remove it now
     if (temporarily_added_read && (bits & M_READ))
