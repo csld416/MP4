@@ -17,6 +17,18 @@ void safestrcpy(char *dst, const char *src, int n)
     *dst = '\0';
 }
 
+void path_join(char *dest, const char *prefix, const char *name)
+{
+    safestrcpy(dest, prefix, MAXPATH);
+    int len = strlen(dest);
+    if (len < MAXPATH - 1)
+    {
+        dest[len] = '/';
+        dest[len + 1] = '\0';
+        safestrcpy(dest + len + 1, name, MAXPATH - len - 1);
+    }
+}
+
 void usage(void)
 {
     fprintf(2, "Usage: chmod [-R] (+|-)(r|w|rw|wr) file_name|dir_name\n");
@@ -99,20 +111,20 @@ int chmod_single(int op, int bits, char *path)
     return chmod(new_mode, path);
 }
 
-void chmod_recursive(int op, int bits, char *path)
+int chmod_recursive(int op, int bits, char *resolved_path, char *display_path)
 {
     struct stat st;
-    int fd = open(path, O_NOACCESS);
+    int fd = open(resolved_path, O_NOACCESS);
     if (fd < 0)
     {
-        fprintf(2, "chmod: cannot chmod %s\n", path);
-        return;
+        fprintf(2, "chmod: cannot chmod %s\n", display_path);
+        return -1;
     }
     if (fstat(fd, &st) < 0)
     {
         close(fd);
-        fprintf(2, "chmod: cannot chmod %s\n", path);
-        return;
+        fprintf(2, "chmod: cannot chmod %s\n", resolved_path);
+        return -1;
     }
     close(fd);
 
@@ -127,46 +139,46 @@ void chmod_recursive(int op, int bits, char *path)
         {
             // We're adding read permission → temporarily add r to enable
             // traversal
-            if (chmod_single(+1, M_READ, path) < 0)
+            if (chmod_single(+1, M_READ, resolved_path) < 0)
             {
                 fprintf(2, "chmod: cannot chmod %s\n", g_original_path);
-                return;
+                return -1;
             }
             temporarily_added_read = 1;
             st.mode |= M_READ; // Update local stat to reflect it
         }
         else if (op < 0)
         {
-            //printf("case4, yo what's up\n");
-            fprintf(2, "chmod: cannot chmod %s\n", path);
-            return;
+            // printf("case4, yo what's up\n");
+            fprintf(2, "chmod: cannot chmod %s\n", display_path);
+            return -1;
         }
     }
 
     // Step 2: If directory, recurse into its children
     if (is_dir)
     {
-        fd = open(path, O_RDONLY);
+        fd = open(resolved_path, O_RDONLY);
         if (fd < 0 && op > 0 && (bits & M_READ))
         {
             // Attempt to temporarily add read permission
-            if (chmod_single(+1, M_READ, path) < 0)
+            if (chmod_single(+1, M_READ, resolved_path) < 0)
             {
                 fprintf(2, "chmod: cannot chmod %s\n", g_original_path);
-                return;
+                return -1;
             }
-            fd = open(path, O_RDONLY);
+            fd = open(resolved_path, O_RDONLY);
             if (fd < 0)
             {
-                fprintf(2, "chmod: cannot open directory %s\n", path);
-                return;
+                fprintf(2, "chmod: cannot chmod %s\n", display_path);
+                return -1;
             }
             temporarily_added_read = 1;
         }
         else if (fd < 0)
         {
-            fprintf(2, "chmod: cannot open directory %s\n", path);
-            return;
+            fprintf(2, "chmod: cannot chmod %s\n", display_path);
+            return -1;
         }
 
         struct dirent de;
@@ -177,15 +189,19 @@ void chmod_recursive(int op, int bits, char *path)
                 strcmp(de.name, "..") == 0)
                 continue;
 
-            safestrcpy(buf, path, sizeof(buf));
+            safestrcpy(buf, resolved_path, sizeof(buf));
             int pathlen = strlen(buf);
             buf[pathlen++] = '/';
             int namelen = strlen(de.name);
             if (namelen > DIRSIZ)
-            namelen = DIRSIZ;
+            {
+                namelen = DIRSIZ;
+            }
             memmove(buf + pathlen, de.name, namelen);
             buf[pathlen + namelen] = '\0';
-            
+
+            char next_display[MAXPATH];
+            path_join(next_display, display_path, de.name);
             char resolved[MAXPATH];
             if (resolve(buf, resolved) < 0)
             {
@@ -193,23 +209,28 @@ void chmod_recursive(int op, int bits, char *path)
                 continue;
             }
 
-            chmod_recursive(op, bits, resolved);
+            if (chmod_recursive(op, bits, resolved, next_display) < 0)
+            {
+                close(fd); // Don't leak FD
+                return -1;
+            }
         }
         close(fd);
     }
 
     // Step 3: Apply chmod to current path (post-order)
-    if (chmod_single(op, bits, path) < 0)
+    if (chmod_single(op, bits, resolved_path) < 0)
     {
-        fprintf(2, "chmod: cannot chmod %s\n", path);
+        fprintf(2, "chmod: cannot chmod %s\n", resolved_path);
     }
 
     // Step 4: If we added read permission temporarily, remove it now
     if (temporarily_added_read && (bits & M_READ))
     {
-        if (op < 0 && chmod_single(-1, M_READ, path) < 0)
-            fprintf(2, "chmod: cannot restore r from %s\n", path);
+        if (op < 0 && chmod_single(-1, M_READ, resolved_path) < 0)
+            fprintf(2, "chmod: cannot restore r from %s\n", resolved_path);
     }
+    return 0;
 }
 
 int main(int argc, char *argv[])
@@ -265,7 +286,7 @@ int main(int argc, char *argv[])
             fprintf(2, "chmod: cannot chmod %s\n", target);
             exit(1);
         }
-        chmod_recursive(op, bits, realpath);
+        chmod_recursive(op, bits, realpath, target);
     }
     else if (chmod_single(op, bits, realpath) < 0)
     {
